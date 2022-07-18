@@ -10,3 +10,7 @@ import argparse, collections, configparser, hashlib, os, re, sys, zlib
 # zlib - for compressing objects which git does as well
 
 argparser = argparse.ArgumentParser(description="The stupid content tracker")
+argsubparsers = argparser.add_subparsers(title="Commands", dest="command")
+argsubparsers.required = True
+
+print("hello world!")

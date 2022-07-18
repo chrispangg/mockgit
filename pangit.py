@@ -85,8 +85,8 @@ def repo_path(repo, *path):
 
 
 def repo_file(repo, *path, mkdir=False):
-    # Same as repo_path but creates dirname(*path) to file using repo_dir if absent.
-    # For example, repo_file(r, \"refs\", \"remotes\", \"origin\", \"HEAD\") will create .git/refs remotes/origin.
+    # Same as repo_path but creates the path to file using repo_dir if absent.
+    # For example, repo_file(r, \"refs\", \"remotes\", \"origin\", \"HEAD\") will create .git/refs/remotes/origin.
 
     if repo_dir(repo, *path[:-1], mkdir=mkdir):
         return repo_path(repo, *path)
@@ -108,3 +108,46 @@ def repo_dir(repo, *path, mkdir=False):
         return path
     else:
         return None
+
+
+def repo_create(path):
+    # Create a new repository at path
+
+    repo = GitRepository(path, True)
+
+    # An existing path for our repo should be a directory and an empty directory
+    # Create a new directory path if doesn't exist
+    if os.path.exists(repo.worktree):
+        if not os.path.isdir(repo.worktree):
+            raise Exception("%s is not a directory!" % path)
+        if os.listdir(repo.worktree):
+            raise Exception("%s is not empty!" % path)
+    else:
+        os.makedirs(repo.worktree)
+
+    # .git/branches/ : the branch store
+    assert repo_dir(repo, "branches", mkdir=True)
+
+    # .git/objects/ : the object store
+    assert repo_dir(repo, "objects", mkdir=True)
+
+    # .git/refs/ : the reference store, contains two subdirectories, heads and tags
+    assert repo_dir(repo, "refs", "tags", mkdir=True)
+    assert repo_dir(repo, "refs", "heads", mkdir=True)
+
+    # git/description : the repository’s description file
+    with open(repo_file(repo, "description"), "w") as f:
+        f.write(
+            "Unnamed repository; edit this file 'description' to name the repository.\n"
+        )
+
+    # git/HEAD: a reference to the current HEAD
+    with (open(repo_file(repo, "HEAD")), "w") as f:
+        f.write("ref: refs/heads/master\n")
+
+    # git/config: the repository’s configuration file
+    with (open(repo_file(repo, "config")), "w") as f:
+        config = repo_default_config()
+        config.write(f)
+
+    return repo

@@ -10,14 +10,43 @@ import argparse, collections, configparser, hashlib, os, re, sys, zlib
 # zlib - for compressing objects which git does as well
 
 argparser = argparse.ArgumentParser(description="Content tracker")
-# argsubparsers for subcommands such as git add or git checkout
 argsubparsers = argparser.add_subparsers(title="Commands", dest="command")
 argsubparsers.required = True
 
 
+class GitRepository(object):
+    # A basic data model for a git repository
+    worktree = None  # Work directory path
+    gitdir = None  # .git directory path
+    conf = None  # Configurations
+
+    def __init__(self, path, force=None):
+        # Use init to check if git repo is valid. Use 'force' to bypass checks
+        # valid repo will have .git
+        self.worktree = path
+        self.gitdir = os.path.join(path, ".git")
+
+        if not (force or os.path.isdir(self.gitdir)):
+            raise Exception("Not a Git Repo %s" % path)
+
+        # Read config file in .git/config using configparser
+        self.conf = configparser.ConfigParser()
+        cf = repo_file(self, "config")  # repo_file gets the path to config
+
+        if cf and os.path.exists(cf):
+            self.conf.read([cf])
+        elif not force:
+            raise Exception("Configuration file missing")
+
+        if not force:
+            vers = int(self.conf.get("core", "repositoryformatversion"))
+            if vers != 0:
+                raise Exception("Unsupported repositoryformatversion %s" % vers)
+
+
 def main(argv=sys.argv[1:]):
     # call functions based on the returned string from the subparser
-    args = argsubparsers.parse_args(argv)
+    args = argparser.parse_args(argv)
 
     if args.command == "add":
         cmd_add(args)
@@ -47,36 +76,6 @@ def main(argv=sys.argv[1:]):
         cmd_show_ref(args)
     elif args.command == "tag":
         cmd_tag(args)
-
-
-class GitRepository(object):
-    # A git repository
-    worktree = None
-    gitdir = None
-    conf = None
-
-    def __init__(self, path, force=None):
-        # Use init to check if git repo is valid. Use 'force' to bypass checks
-        # valid repo will have .git
-        self.worktree = path
-        self.gitdir = os.path.join(path, ".git")
-
-        if not (force or os.path.isdir(self.gitdir)):
-            raise Exception("Not a Git Repo %s" % path)
-
-        # Read config file in .git/config using configparser
-        self.conf = configparser.ConfigParser()
-        cf = repo_file(self, "config")  # repo_file gets the path to config
-
-        if cf and os.path.exists(cf):
-            self.conf.read([cf])
-        elif not force:
-            raise Exception("Configuration file missing")
-
-        if not force:
-            vers = int(self.conf.get("core", "repositoryformatversion"))
-            if vers != 0:
-                raise Exception("Unsupported repositoryformatversion %s" % vers)
 
 
 def repo_path(repo, *path):
@@ -120,10 +119,10 @@ def repo_create(path):
     if os.path.exists(repo.worktree):
         if not os.path.isdir(repo.worktree):
             raise Exception("%s is not a directory!" % path)
-        if os.listdir(repo.worktree):
-            raise Exception("%s is not empty!" % path)
+        if os.path.exists(repo.gitdir) and os.path.isdir(repo.gitdir):
+            raise Exception("%s is already a pangit repo (contains a .git)!" % path)
     else:
-        os.makedirs(repo.worktree)
+        os.makedirs(repo.gitdir)
 
     # .git/branches/ : the branch store
     assert repo_dir(repo, "branches", mkdir=True)
@@ -142,11 +141,11 @@ def repo_create(path):
         )
 
     # git/HEAD: a reference to the current HEAD
-    with (open(repo_file(repo, "HEAD")), "w") as f:
-        f.write("ref: refs/heads/master\n")
+    with open(repo_file(repo, "HEAD"), "w") as f:
+        f.write("ref: refs/heads/main\n")
 
     # git/config: the repository’s configuration file
-    with (open(repo_file(repo, "config")), "w") as f:
+    with open(repo_file(repo, "config"), "w") as f:
         config = repo_default_config()
         config.write(f)
 
@@ -169,3 +168,20 @@ def repo_default_config():
     ret.set("core", "bare", "false")
 
     return ret
+
+
+# an argparse subparser to handle the init command’s argument
+argsp = argsubparsers.add_parser("init", help="Initialize a new, empty repository.")
+
+# add an argument "." to create default path from the current directory
+argsp.add_argument(
+    "path",
+    metavar="directory",
+    nargs="?",
+    default=".",
+    help="Where to create the repository.",
+)
+
+
+def cmd_init(args):
+    repo_create(args.path)

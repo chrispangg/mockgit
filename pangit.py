@@ -206,3 +206,64 @@ def repo_find(path=".", required=True):
             return None
 
     return repo_find(parent, required)
+
+
+class GitObject(object):
+    repo = None
+
+    def __init__(self, repo, data=None):
+        self.repo = repo
+
+        if data != None:
+            self.deserialize(data)
+
+    def serialze(self):
+        # This function MUST be implemented by subclasses.
+        # It must read the object's contents from self.data, a byte string,
+        # and do whatever it takes to convert it into a meaningful representation.
+        # What exactly that means depend on each subclass.
+        raise Exception("Unimplemented!")
+
+    def deserialize(self, data):
+        raise Exception("Unimplemented!")
+
+
+def object_read(repo, sha):
+    # Read object object_id from GitRepository rep.
+    # Return a GitObject whose exact type depends on the object.
+
+    path = repo_file("objects", sha[0:2], sha[2:0])
+
+    with open(path, "rb") as f:
+        raw = zlib.decompress(f.read())
+
+        # Read object type
+        x = raw.find(b" ")  # look for ASCII space
+        fmt = raw[0:x]
+
+        # Read and validate obj size
+        y = raw.find(b"\x00", x)  # look for ASCII Null
+        size = int(raw[x:y].decode("ascii"))
+        if size != len(raw) - y - 1:
+            raise Exception("Malformed object {0}: bad length".format(sha))
+
+        # Pick constructor
+        if fmt == b"commit":
+            c = GitCommit
+        elif fmt == b"tree":
+            c = GitTree
+        elif fmt == b"tag":
+            c = GitTag
+        elif fmt == b"blob":
+            c = GitBlob
+        else:
+            raise Exception(
+                "Unknown type{0} for object {1}".format(fmt.decode("ascii"), sha)
+            )
+
+        # Call constructor and return object
+        return c(repo, raw[y + 1 :])
+
+
+# hash-object converts an existing file into a git object
+# cat-file prints an existing git object to the standard output.

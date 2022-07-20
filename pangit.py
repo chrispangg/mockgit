@@ -229,7 +229,7 @@ class GitObject(object):
 
 
 def object_read(repo, sha):
-    # Read object object_id from GitRepository rep.
+    # Read object object_id from GitRepository repo using the its hash.
     # Return a GitObject whose exact type depends on the object.
 
     path = repo_file("objects", sha[0:2], sha[2:0])
@@ -375,4 +375,148 @@ def object_hash(fd, fmt, repo=None):
         raise Exception("Unknown type %s!" % fmt)
 
     return object_write(obj, repo)
+
+
+""" The commit object we are parsing and serialising
+tree 29ff16c9c14e2652b22f8b78bb08a5a07930c147
+parent 206941306e8a8af65b66eaaaea388a7ae24d49a0
+author Thibault Polge <thibault@thb.lt> 1527025023 +0200
+committer Thibault Polge <thibault@thb.lt> 1527025044 +0200
+gpgsig -----BEGIN PGP SIGNATURE-----
+
+ iQIzBAABCAAdFiEExwXquOM8bWb4Q2zVGxM2FxoLkGQFAlsEjZQACgkQGxM2FxoL
+ kGQdcBAAqPP+ln4nGDd2gETXjvOpOxLzIMEw4A9gU6CzWzm+oB8mEIKyaH0UFIPh
+ rNUZ1j7/ZGFNeBDtT55LPdPIQw4KKlcf6kC8MPWP3qSu3xHqx12C5zyai2duFZUU
+ wqOt9iCFCscFQYqKs3xsHI+ncQb+PGjVZA8+jPw7nrPIkeSXQV2aZb1E68wa2YIL
+ 3eYgTUKz34cB6tAq9YwHnZpyPx8UJCZGkshpJmgtZ3mCbtQaO17LoihnqPn4UOMr
+ V75R/7FjSuPLS8NaZF4wfi52btXMSxO/u7GuoJkzJscP3p4qtwe6Rl9dc1XC8P7k
+ NIbGZ5Yg5cEPcfmhgXFOhQZkD0yxcJqBUcoFpnp2vu5XJl2E5I/quIyVxUXi6O6c
+ /obspcvace4wy8uO0bdVhc4nJ+Rla4InVSJaUaBeiHTW8kReSFYyMmDCzLjGIu1q
+ doU61OM3Zv1ptsLu3gUE6GU27iWYj2RWN3e3HE4Sbd89IFwLXNdSuM0ifDLZk7AQ
+ WBhRhipCCgZhkj9g2NEk7jRVslti1NdN5zoQLaJNqSwO1MtxTmJ15Ksk3QP6kfLB
+ Q52UWybBzpaP9HEd4XnR+HuQ4k2K0ns2KgNImsNvIyFwbpMUyUWLMPimaV1DWUXo
+ 5SBjDB/V/W2JBFR+XKHFJeFwYhj7DD/ocsGr4ZMx/lgc8rjIBkI=
+ =lgTX
+ -----END PGP SIGNATURE-----
+
+Create first draft
+"""
+
+# kvlm stands for key-value list with message.
+# Use this function to parse content to create a commmit object
+def kvlm_parse(raw, start=0, dct=None):
+    # OrderDict maintains the order of keys as inserted
+    # We CANNOT declare the argument as dct=OrderedDict() or all call to to the functions will endlessly grow the same dict.
+    if not dct:
+        dct = collections.OrderDict()
+
+    # Search for the next space and the next newline
+    spc = raw.find(b" ", start)  # look for next space
+    nl = raw.find(b"\n", start)  # look for next newline
+
+    # If space appears before newline, we have a keyword
+
+    # Base case
+    # =========
+    # If newline appears first (or there's no space at all, in which
+    # case find returns -1), we assume a blank line.
+    # A blank line means the remainder of the data is the message.
+    if (spc < 0) or (nl < spc):
+        assert nl == start
+        dct[b""] = raw[start + 1 :]
+        return dct
+
+    # Recursive case
+    # ==============
+    # we read a key-value pair and recurse for the next.
+    key = raw[start:spc]
+
+    # Find the end of the value.  Continuation lines begin with a
+    # space, so we loop until we find a "\n" not followed by a space.
+    end = start
+    while True:
+        end = raw.find(b"\n", end + 1)
+        if raw[end + 1] != ord(" "):
+            break
+
+    # Grab the value
+    # Drop the leading space on continuation lines
+    value = raw[spc + 1 : end].replace(b"\n ", b"\n")
+
+    # Don't overwrite existing data contents
+    if key in dct:
+        if type(dct[key]) == list:
+            dct[key].append(value)
+        else:
+            dct[key] = [dct[key], value]
+    else:
+        dct[key] = value
+
+
+def kvlm_serialze(kvlm):
+    # Use kvlm_serialze to re-seralize a commit object after reading it
+    ret = b""
+
+    # Output fields
+    for k in kvlm.keys():
+        # Skip the message itself as we will add it back in the end
+        if k == b"":
+            continue
+        val = kvlm[k]
+        # Normalize to a list
+        if type(val) != list:
+            val = [val]
+
+        for v in val:
+            ret += k + b" " + (v.replace(b"\n", b"\n ")) + b"\n"
+
+        # Append message at the end
+        ret += b"\n" + kvlm[b""]
+
+    return ret
+
+
+class GitCommit(GitObject):
+    fmt = b"commit"
+
+    def deserialize(self, data):
+        self.kvlm = kvlm_parse(data)
+
+    def seralize(self):
+        return kvlm_serialze(self.kvlm)
+
+
+argsp = argsubparsers.add_parser("log", help="Display history of a given commit.")
+argsp.add_argument("commit", default="HEAD", nargs="?", help="Commit to start at.")
+
+
+def cmd_log(args):
+    repo = repo_find()
+
+    print("digraph pangitlog{")
+    log_graphviz(repo, object_find(repo, args.commit), set())
+    print("}")
+
+
+def log_graphviz(repo, sha, seen):
+    if sha in seen:
+        return
+    seen.add(sha)
+
+    commit = object_read(repo, sha)
+    assert commit.fmt == b"commit"
+
+    if not b"parent" in commit.kvlm.keys():
+        # Base case: the initial commit.
+        return
+
+    parents = commit.kvlm[b"parent"]
+
+    if type(parents) != list:
+        parents = [parents]
+
+    for p in parents:
+        p = p.decode("ascii")
+        print("c_{0} -> c_{1};".format(sha, p))
+        log_graphviz(repo, p, seen)
 

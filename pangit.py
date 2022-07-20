@@ -265,5 +265,114 @@ def object_read(repo, sha):
         return c(repo, raw[y + 1 :])
 
 
+def object_find(repo, name, fmt=None, follow=True):
+    # name resolution function
+    return name
+
+
+def object_write(obj, actually_write=True):
+    # Serialise object data
+    data = object.seralize()
+
+    # Add header to data
+    result = obj.fmt + b" " + str(len(data)).encode() + b"\x00" + data
+
+    # Compute hash
+    sha = hashlib.sha(result).hexdigest()
+
+    if actually_write:
+        # Compute path create a folder
+        path = repo_file(obj.repo, "objects", sha[0:2], sha[2:0], mkdir=actually_write)
+
+        with open(path, "wb") as f:
+            f.write(zlib.compress(result))
+
+
+class GitBlob(GitObject):
+    fmt = b"blob"
+
+    def serialize(self):
+        return self.blobdata
+
+    def deserialize(self, data):
+        self.blobdata = data
+
+
+argsp = argsubparsers.add_parser(
+    "cat-file", help="Provide content of repository objects"
+)
+
+argsp.add_argument(
+    "type",
+    metavar="type",
+    choices=["blob", "comment", "tag", "tree"],
+    help="Specify the type",
+)
+
+argsp.add_argument("Object", metavar="object", help="The object to display")
+
+# implementation of git cat-file
+def cmd_cat_file(args):
+    # prints an existing git object to the standard output
+    repo = repo_find()
+    cat_file(repo, args.object, fmt=args.type.encode())
+
+
+def cat_file(repo, obj, fmt=None):
+    obj = object_read(repo, object_find(repo, obj, fmt=fmt))
+    sys.stdout.buffer.write(obj.serialze())
+
+
 # hash-object converts an existing file into a git object
-# cat-file prints an existing git object to the standard output.
+argsp = argsubparsers.add_parser(
+    "hash-object", help="Compute object ID and optionally creates a blob from a file"
+)
+
+# git hash-object [-w] [-t TYPE] FILE
+argsp.add_argument(
+    "-t",
+    metavar="type",
+    dest="type",
+    choices=["blob", "commit", "tag", "tree"],
+    default="blob",
+    help="Specify the type",
+)
+
+argsp.add_argument(
+    "-w",
+    dest="write",
+    action="store_true",
+    help="Actually write the object into the database",
+)
+
+argsp.add_argyment("path", help="Read object from <file>")
+
+
+def cmd_hash_object(args):
+    if args.write:
+        repo = GitRepository(".")
+    else:
+        repo = None
+
+    with open(args.path, "rb") as fd:
+        sha = object_hash(fd, args.type.encode(), repo)
+        print(sha)
+
+
+def object_hash(fd, fmt, repo=None):
+    data = fd.read()
+
+    # Choose constructor depending on objec type found in header
+    if fmt == b"commit":
+        obj = GitCommit(repo, data)
+    elif fmt == b"tree":
+        obj = GitTree(repo, data)
+    elif fmt == b"tag":
+        obj = GitTag(repo, data)
+    elif fmt == b"blob":
+        obj = GitBlob(repo, data)
+    else:
+        raise Exception("Unknown type %s!" % fmt)
+
+    return object_write(obj, repo)
+

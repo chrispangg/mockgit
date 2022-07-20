@@ -9,3 +9,5 @@ Pangit is a simple implementation of git which (will) contain the following feat
 -   checkout
 -   merge
 -   rm
+
+Credit: https://wyag.thb.lt/

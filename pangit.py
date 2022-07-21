@@ -345,7 +345,7 @@ argsp.add_argument(
     help="Actually write the object into the database",
 )
 
-argsp.add_argyment("path", help="Read object from <file>")
+argsp.add_argument("path", help="Read object from <file>")
 
 
 def cmd_hash_object(args):
@@ -520,3 +520,98 @@ def log_graphviz(repo, sha, seen):
         print("c_{0} -> c_{1};".format(sha, p))
         log_graphviz(repo, p, seen)
 
+
+class GitTreeLeaf(object):
+    def __init__(self, mode, path, sha):
+        self.mode = mode
+        self.path = path
+        self.sha = sha
+
+
+def tree_parse_one(raw, start=0):
+    # A parser to extract a single record,
+    # which returns parsed data
+    # and the position it reached in input data
+
+    # Find the space terminator of the mode
+    x = raw.find(b" ", start)
+    assert x - start == 5 or x - start == 6
+
+    # Read the mode
+    mode = raw[start:x]
+
+    # Find the Null terminator of the path
+    y = raw.find(b"\x00", x)
+    # and read the path
+    path = raw[x + 1 : y]
+
+    # Read the SHA and convert to an hex string
+    sha = hex(
+        int.from_bytes(
+            # from_bytes return integer from bytes.
+            # hex() adds 0x in front and we don't want that
+            raw[y + 1 : y + 21],
+            "big",
+        )
+    )[2:]
+
+    return y + 21, GitTreeLeaf(mode, path, sha)
+
+
+def tree_parse(raw):
+    # tree_parse calls tree_parse_one until input data is exhausted
+    pos = 0
+    max = len(raw)
+    ret = list()
+    while pos < max:
+        pos, data = tree_parse(raw, pos)
+        ret.append(data)
+    return ret
+
+
+def tree_serialize(obj):
+    # tree_serializer serialise tree object to bytes
+    # 100644 894a44cc066a027465cd26d634948d56d13af9af .gitignore
+    ret = b""
+    for i in obj.items:
+        ret += i.mode
+        ret += b" "
+        ret += i.path
+        ret += b"\x00"
+        sha = int(i.sha, 16)
+
+        ret += sha.to_bytes(20, byteorder="big")
+    return ret
+
+
+class GitTree(GitObject):
+    fmt = b"tree"
+
+    def deserialize(self, data):
+        self.items = tree_parse(data)
+
+    def serialize(self):
+        return tree_serialize(self)
+
+
+# ls-tree command
+argsp = argsubparsers.add_parser("ls-tree", help="Pretty-print a tree object.")
+argsp.add_argument("object", help="The object to show.")
+
+
+def cmd_ls_tree(args):
+    repo = repo_find()
+    obj = object_read(repo, object_find(repo, args.object, fmt=b"tree"))
+
+    for item in obj.items:
+        print(
+            "{0} {1} {2}\t{3}".format(
+                "0" * (6 - len(item.mode)) + item.mode.decode("ascii"),
+                # Git's ls-tree displays the type
+                # of the object pointed to.  We can do that too :)
+                object_read(repo, item.sha).fmt.decode("ascii"),
+                item.sha,
+                item.path.decode("ascii"),
+            )
+        )
+    

@@ -657,3 +657,61 @@ def tree_checkout(repo, tree, path):
         elif obj.fmt == b"blob":
             with open(dest, "wb") as f:
                 f.write(obj.blobdata)
+
+
+def ref_resolve(repo, ref):
+    # A recursive solver that takes a ref name,
+    # then follow eventual recurisve reference (refs whose content begin with "ref:")
+    # and return a SHA-1
+    # A ref: refs/remotes/origin/master
+    with open(repo_file(repo, ref), "r") as fp:
+        data = fp.read()[:-1]  # drop the final \n
+    if data.startwith("ref: "):
+        return ref_resolve(repo, data[5:])
+    else:
+        return data
+
+
+def ref_list(repo, path=None):
+    # A recursive function to collect refs and return them as a dict
+    if not path:
+        path = repo_dir(repo, "ref")
+    ret = collections.OrderedDict()
+    # Git shows refs sorted.
+    # To do the same, we use an OrderedDict and sort the output of listdir
+    for f in sorted(os.listdir(path)):
+        can = os.path.join(path, f)  # path to dir
+        if os.path.isdir(can):  # if dir, recursive call
+            ret[f] = ref_list(repo, can)
+        else:
+            ret[f] = ref_resolve(repo, can)
+
+    return ret
+
+
+argsp = argsubparsers.add_parser("show-ref", help="List referneces.")
+
+
+def cmd_show_ref(args):
+    # this function is called when user uses git show-ref. 
+    # Show-ref shows the reference of branch to the git object from a .git/refs file
+    repo = repo_find()
+    refs = ref_list(repo)
+    show_ref(repo, refs, prefix="ref")
+
+
+def show_ref(repo, refs, with_hash=True, prefix=""):
+    for k, v in refs.items():
+        if type(v) == str:
+            print(
+                "{0}{1}{2}".format(
+                    v + " " if with_hash else "", prefix + "/" if prefix else "", k
+                )
+            )
+        else:
+            show_ref(
+                repo,
+                v,
+                with_hash,
+                prefix="{0}{1}{2}".format(prefix, "/" if prefix else "", k),
+            )

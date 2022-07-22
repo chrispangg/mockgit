@@ -693,7 +693,7 @@ argsp = argsubparsers.add_parser("show-ref", help="List referneces.")
 
 
 def cmd_show_ref(args):
-    # this function is called when user uses git show-ref. 
+    # this function is called when user uses git show-ref.
     # Show-ref shows the reference of branch to the git object from a .git/refs file
     repo = repo_find()
     refs = ref_list(repo)
@@ -715,3 +715,79 @@ def show_ref(repo, refs, with_hash=True, prefix=""):
                 with_hash,
                 prefix="{0}{1}{2}".format(prefix, "/" if prefix else "", k),
             )
+
+
+"""
+“Lightweight” tags are just regular refs to a commit, a tree or a blob.
+
+Tag objects are regular refs pointing to an object of type tag. 
+Unlike lightweight tags, tag objects have an author, a date, an optional PGP signature and an optional annotation. 
+"""
+
+
+class GitTag(GitCommit):
+    # For tag objects we will reuse the git commit object
+    fmt = b"tag"
+
+
+"""
+git tag Commands:
+git tag                  # List all tags
+git tag NAME [OBJECT]    # create a new *lightweight* tag NAME, pointing at HEAD (default) or OBJECT
+git tag -a NAME [OBJECT] # create a new tag *object* NAME, pointing at HEAD (default) or OBJECT
+"""
+
+argsp = argsubparsers.add_parser("tag", help="List and create tags")
+
+argsp.add_argument(
+    "-a",
+    action="store_true",
+    dest="create_tag_object",
+    help="Whether to create a tag object",
+)
+
+argsp.add_argument("name", nargs="?", help="The new tag's name")
+
+argsp.add_argument(
+    "object", default="HEAD", nargs="?", help="The object the new tag will point to"
+)
+
+
+def cmd_tag(args):
+    repo = repo_find()
+
+    if args.name:
+        tag_create(
+            args.name, args.object, type="object" if args.create_tag_object else "ref"
+        )
+    else:
+        refs = ref_list(repo)
+        show_ref(repo, refs["tags"], with_hash=False)
+
+
+def tag_create(repo: GitRepository, name, reference, create_tag_object):
+    # get the GitObject from the object reference
+    sha = object_find(repo, reference)
+
+    if create_tag_object:
+        # create tag object (commit)
+        tag = GitTag(repo)
+        tag.kvlm = collections.OrderedDict()
+        tag.kvlm[b"object"] = sha.encode()
+        tag.kvlm[b"type"] = b"commit"
+        tag.kvlm[b"tag"] = name.encode()
+        tag.kvlm[b"tagger"] = b"Chris Pang"
+        tag.kvlm[
+            b""
+        ] = b"This is the commit message that should have come from the user\n"
+        tag_sha = object_write(tag, repo)
+        # create reference
+        ref_create(repo, "tags/" + name, tag_sha)
+    else:
+        # create lightweight tag (ref)
+        ref_create(repo, "tags/" + name, sha)
+
+
+def ref_create(repo, ref_name, sha):
+    with open(repo_file(repo, "refs/" + ref_name), "w") as fp:
+        fp.write(sha + "\n")

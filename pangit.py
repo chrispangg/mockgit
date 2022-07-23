@@ -266,8 +266,42 @@ def object_read(repo, sha):
 
 
 def object_find(repo, name, fmt=None, follow=True):
-    # name resolution function
-    return name
+    # name resolution function. Passing in the name returns the object
+    # we will leverage object_resolve to get sha from name
+    # then we perform logics to find and return the decoded object
+    sha = object_resolve(repo, name)
+
+    if not sha:
+        raise Exception("No such reference {0}".format(name))
+
+    if len(sha) > 1:
+        # if returned more than one sha
+        raise Exception(
+            "Ambiguous reference {0}: Candidates are:\n - {1}.".format(
+                name, "\n - ".join(sha)
+            )
+        )
+
+    sha = sha[0]
+
+    if not fmt:
+        return sha
+
+    while True:
+        obj = object_read(repo, sha)
+
+        if obj.fmt == fmt:
+            return sha
+        if not follow:
+            return None
+
+        # Follow tags
+        if obj.fmt == b"tag":
+            sha = obj.kvlm[b"object"].decode("ascii")
+        elif obj.fmt == b"commit" and fmt == b"tree":
+            sha = obj.kvlm[b"tree"].decode("ascii")
+        else:
+            return None
 
 
 def object_write(obj, actually_write=True):
@@ -660,7 +694,8 @@ def tree_checkout(repo, tree, path):
 
 
 def ref_resolve(repo, ref):
-    # A recursive solver that takes a ref name,
+    # 012116ff0658457325e7585dca508b1c5f67d067 refs/heads/master
+    # A recursive resolver that takes a ref name i.e. master,
     # then follow eventual recurisve reference (refs whose content begin with "ref:")
     # and return a SHA-1
     # A ref: refs/remotes/origin/master
@@ -791,3 +826,88 @@ def tag_create(repo: GitRepository, name, reference, create_tag_object):
 def ref_create(repo, ref_name, sha):
     with open(repo_file(repo, "refs/" + ref_name), "w") as fp:
         fp.write(sha + "\n")
+
+
+"""
+A branch is a reference to a commit. Which means it is fundamentally the same as a tag.
+Tags are refs that live in .git/refs/tags, branches are refs that live in .git/refs/heads
+Current branch is referenced in .git/HEAD, which is an indirect ref
+
+Key differences:
+1. Branches are references to a commit, tags can refer to any object;
+2. But most importantly, the branch ref is updated at each commit. This means that whenever you commit, Git actually does this:
+    i. a new commit object is created, with the current branch’s ID as its parent;
+    ii. the commit object is hashed and stored;
+    iii. the branch ref is updated to refer to the new commit’s hash.
+"""
+
+
+def object_resolve(repo, name):
+    # Return an object hash in repo from it's name
+    """
+    This function is aware:
+        - the HEAD literal
+        - short and long hashes
+        - tags
+        - Branches
+        - remove branches
+    """
+    candidates = list()
+    hashRE = re.compile(r"^[0-9A-Fa-f]{4,40}$")
+
+    # Abort if empty string
+    if not name.strip():
+        return None
+
+    # Head is nonambiguous
+    if name == "HEAD":
+        return [ref_resolve(repo, "HEAD")]
+
+    if hashRE.match(name):  # if name matches the regex
+        if len(name) == 40:
+            # This is a complete hash
+            return [name.lower()]
+
+    # For dealing iwth short hash
+    name = name.lower()
+    prefix = name[0:2]
+    path = repo_dir(repo, "object", prefix, mkdir=False)
+    if path:
+        rem = name[2:0]
+        for f in os.listdir(path):
+            if f.startswith(rem):
+                candidates.append(prefix + f)
+
+    # search for branches and tags (with or without "refs" and "heads" or "tags" prefixes)
+    for path in [f"refs/heads/{name}", f"refs/tags/{name}", f"refs/{name}", name]:
+        if os.path.exists(repo_file(repo, path)):
+            candidates.append(ref_resolve(repo, path))
+
+    return candidates
+
+
+# rev-parse command for testing the "follow" feature of object_find
+argsp = argsubparsers.add_parser(
+    "rev-parse", help="Parse revision (or other objects) identifiers"
+)
+
+argsp.add_argument(
+    "--pangit-type",
+    metavar="type",
+    dest="type",
+    choices=["blob", "commit", "tag", "tree"],
+    default=None,
+    help="Specify the expected type",
+)
+
+argsp.add_argument("name", help="The name to parse")
+
+
+def cmd_ref_parse(args):
+    if args.type:
+        fmt = args.type.encode()
+    else:
+        fmt = None
+    repo = repo_find()
+
+    print(object_find(repo, args.name, fmt, follow=True))

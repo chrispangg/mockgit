@@ -487,7 +487,7 @@ def kvlm_parse(raw, start=0, dct=None):
         dct[key] = value
 
 
-def kvlm_serialze(kvlm):
+def kvlm_serialize(kvlm):
     # Use kvlm_serialze to re-seralize a commit object after reading it
     ret = b""
 
@@ -517,7 +517,7 @@ class GitCommit(GitObject):
         self.kvlm = kvlm_parse(data)
 
     def seralize(self):
-        return kvlm_serialze(self.kvlm)
+        return kvlm_serialize(self.kvlm)
 
 
 argsp = argsubparsers.add_parser("log", help="Display history of a given commit.")
